@@ -15,9 +15,14 @@
     "db:push": "turbo -F server db:push",
     "db:studio": "turbo -F server db:studio",
     "db:generate": "turbo -F server db:generate",
-    "db:migrate": "turbo -F server db:migrate"
+    "db:migrate": "turbo -F server db:migrate",
+    "tauri": "tauri dev"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@tauri-apps/api": "^2.7.0",
+    "install": "^0.13.0",
+    "react-hotkeys-hook": "^5.1.0"
+  },
   "devDependencies": {
     "turbo": "^2.5.4"
   },

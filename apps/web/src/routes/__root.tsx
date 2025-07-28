@@ -1,4 +1,4 @@
-import Header from "@/components/header";
+import { AppSidebar } from "@/components/app-sidebar";
 import Loader from "@/components/loader";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
@@ -13,6 +13,7 @@ import {
 } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import "../index.css";
+import { SidebarInset } from "@/components/ui/sidebar";
 
 export interface RouterAppContext {
   trpc: typeof trpc;
@@ -45,7 +46,6 @@ function RootComponent() {
     select: (s) => s.isLoading,
   });
 
-
   return (
     <>
       <HeadContent />
@@ -55,13 +55,19 @@ function RootComponent() {
         disableTransitionOnChange
         storageKey="vite-ui-theme"
       >
-        <div className="grid grid-rows-[auto_1fr] h-svh">
-          <Header />
-          {isFetching ? <Loader /> : <Outlet />}
-        </div>
+        <AppSidebar>
+          {isFetching ? (
+            <Loader />
+          ) : (
+            <SidebarInset>
+              {" "}
+              <Outlet />
+            </SidebarInset>
+          )}
+        </AppSidebar>
         <Toaster richColors />
       </ThemeProvider>
-      <TanStackRouterDevtools position="bottom-left" />
+      <TanStackRouterDevtools position="bottom-right" />
       <ReactQueryDevtools position="bottom" buttonPosition="bottom-right" />
     </>
   );
