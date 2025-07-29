@@ -13,7 +13,9 @@
     "dev:web": "turbo -F web dev",
     "dev:server": "turbo -F server dev"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@tailwindcss/typography": "^0.5.16"
+  },
   "devDependencies": {
     "turbo": "^2.5.4"
   },
