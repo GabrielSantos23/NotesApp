@@ -9,7 +9,7 @@ use std::thread;
 use std::time::Duration;
 use tauri::{command, Emitter};
 use tauri_plugin_clipboard_manager::{init as clipboard_manager_plugin, ClipboardExt};
-use window_vibrancy::{apply_blur, apply_vibrancy, NSVisualEffectMaterial};
+use window_vibrancy::apply_acrylic;
 use tauri::Manager;
 
 #[derive(Clone, Serialize)]
@@ -27,7 +27,7 @@ struct Note {
     updated_at: DateTime<Utc>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 struct NoteMetadata {
     id: String,
     title: String,
@@ -35,15 +35,79 @@ struct NoteMetadata {
     updated_at: DateTime<Utc>,
 }
 
+#[derive(Clone, Serialize, Deserialize, Debug)]
+struct SidebarState {
+    notes: Vec<NoteMetadata>,
+    last_sync_time: i64,
+    is_collapsed: Option<bool>,
+    selected_note_id: Option<String>,
+}
+
 fn get_notes_dir() -> std::path::PathBuf {
-    let app_dir = std::env::current_dir().unwrap().join("notes");
+    let app_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")).join("notes");
     app_dir.join("notes")
+}
+
+fn get_app_data_dir() -> std::path::PathBuf {
+    let app_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")).join("notes");
+    app_dir.join("app_data")
 }
 
 fn ensure_notes_dir() -> Result<(), String> {
     let notes_dir = get_notes_dir();
     fs::create_dir_all(&notes_dir).map_err(|e| format!("Failed to create notes directory: {}", e))?;
     Ok(())
+}
+
+fn ensure_app_data_dir() -> Result<(), String> {
+    let app_data_dir = get_app_data_dir();
+    fs::create_dir_all(&app_data_dir).map_err(|e| format!("Failed to create app data directory: {}", e))?;
+    Ok(())
+}
+
+#[command]
+fn save_sidebar_state(state: SidebarState) -> Result<(), String> {
+    println!("Saving sidebar state: {:?}", state);
+    ensure_app_data_dir()?;
+    
+    let app_data_dir = get_app_data_dir();
+    let file_path = app_data_dir.join("sidebar_state.json");
+    
+    let json = serde_json::to_string_pretty(&state)
+        .map_err(|e| format!("Failed to serialize sidebar state: {}", e))?;
+
+    println!("Saving to file: {:?}", file_path);
+
+    // Create parent directories if they don't exist
+    if let Some(parent) = file_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {}", e))?;
+    }
+
+    fs::write(&file_path, json).map_err(|e| format!("Failed to write sidebar state file: {}", e))?;
+    println!("Sidebar state saved successfully");
+
+    Ok(())
+}
+
+#[command]
+fn load_sidebar_state() -> Result<Option<SidebarState>, String> {
+    println!("Loading sidebar state...");
+    let app_data_dir = get_app_data_dir();
+    let file_path = app_data_dir.join("sidebar_state.json");
+
+    if !file_path.exists() {
+        println!("Sidebar state file does not exist");
+        return Ok(None);
+    }
+
+    let content = fs::read_to_string(&file_path)
+        .map_err(|e| format!("Failed to read sidebar state file: {}", e))?;
+
+    let state: SidebarState = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse sidebar state: {}", e))?;
+
+    println!("Loaded sidebar state: {:?}", state);
+    Ok(Some(state))
 }
 
 #[command]
@@ -66,6 +130,11 @@ fn save_note(title: String, content: String, links: Vec<String>) -> Result<Strin
     let file_path = notes_dir.join(format!("{}.json", id));
     let json = serde_json::to_string_pretty(&note)
         .map_err(|e| format!("Failed to serialize note: {}", e))?;
+
+    // Create parent directories if they don't exist
+    if let Some(parent) = file_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {}", e))?;
+    }
 
     fs::write(&file_path, json).map_err(|e| format!("Failed to write note file: {}", e))?;
 
@@ -100,6 +169,11 @@ fn update_note(id: String, title: String, content: String, links: Vec<String>) -
 
     let json = serde_json::to_string_pretty(&updated_note)
         .map_err(|e| format!("Failed to serialize note: {}", e))?;
+
+    // Create parent directories if they don't exist
+    if let Some(parent) = file_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {}", e))?;
+    }
 
     fs::write(&file_path, json).map_err(|e| format!("Failed to write note file: {}", e))?;
 
@@ -188,6 +262,34 @@ fn open_url(url: String) -> Result<(), String> {
     }
 }
 
+#[command]
+fn minimize_window(app_handle: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app_handle.get_webview_window("main") {
+        window.minimize().map_err(|e| format!("Failed to minimize window: {}", e))?;
+    }
+    Ok(())
+}
+
+#[command]
+fn maximize_window(app_handle: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app_handle.get_webview_window("main") {
+        if window.is_maximized().unwrap_or(false) {
+            window.unmaximize().map_err(|e| format!("Failed to unmaximize window: {}", e))?;
+        } else {
+            window.maximize().map_err(|e| format!("Failed to maximize window: {}", e))?;
+        }
+    }
+    Ok(())
+}
+
+#[command]
+fn close_window(app_handle: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app_handle.get_webview_window("main") {
+        window.close().map_err(|e| format!("Failed to close window: {}", e))?;
+    }
+    Ok(())
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(clipboard_manager_plugin())
@@ -199,23 +301,35 @@ fn main() {
             update_note,
             load_note,
             list_notes,
-            delete_note
+            delete_note,
+            minimize_window,
+            maximize_window,
+            close_window,
+            save_sidebar_state,
+            load_sidebar_state
         ])
         .setup(|app| {
             let app_handle = app.handle().clone();
-            let window = app.get_webview_window("main").unwrap();
+            let window = match app.get_webview_window("main") {
+                Some(window) => window,
+                None => {
+                    eprintln!("Failed to get main window");
+                    return Ok(());
+                }
+            };
 
             #[cfg(target_os = "windows")]
             {
-                // ARGB: R=18, G=18, B=18, A=125
-                apply_blur(&window, Some((18, 18, 18, 125)))
-                    .expect("Failed to apply blur on Windows");
+                // Use acrylic for better backdrop blur support
+                if let Err(e) = apply_acrylic(&window, Some((18, 18, 18, 125))) {
+                    eprintln!("Failed to apply acrylic on Windows: {}", e);
+                }
             }
 
             #[cfg(target_os = "macos")]
             {
-                apply_vibrancy(&window, NSVisualEffectMaterial::Sidebar, None)
-                    .expect("Failed to apply vibrancy on macOS");
+                // Note: apply_vibrancy is not available in the current version
+                // macOS vibrancy support would need to be implemented differently
             }
 
             // Start clipboard monitoring in a separate thread
@@ -224,18 +338,25 @@ fn main() {
 
                 loop {
                     let clipboard_manager = app_handle.clipboard();
-                    if let Ok(text) = clipboard_manager.read_text() {
-                        if !text.is_empty() && text != last_content {
-                            last_content = text.clone();
+                    match clipboard_manager.read_text() {
+                        Ok(text) => {
+                            if !text.is_empty() && text != last_content {
+                                last_content = text.clone();
 
-                            // Emit event to frontend with new clipboard content
-                            let _ = app_handle.emit(
-                                "clipboard-changed",
-                                ClipboardContent {
-                                    text: text.clone(),
-                                },
-                            );
-                            println!("Clipboard content changed: {}", text);
+                                // Emit event to frontend with new clipboard content
+                                if let Err(e) = app_handle.emit(
+                                    "clipboard-changed",
+                                    ClipboardContent {
+                                        text: text.clone(),
+                                    },
+                                ) {
+                                    eprintln!("Failed to emit clipboard event: {}", e);
+                                }
+                                println!("Clipboard content changed: {}", text);
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to read clipboard: {}", e);
                         }
                     }
                     // Wait a bit before checking again
@@ -247,5 +368,8 @@ fn main() {
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .unwrap_or_else(|e| {
+            eprintln!("Error while running tauri application: {}", e);
+            std::process::exit(1);
+        });
 }

@@ -1,48 +1,42 @@
-import { Link, useRouter, useLocation } from "@tanstack/react-router";
-import {
-  HomeIcon,
-  FileTextIcon,
-  SettingsIcon,
-  UserIcon,
-  SearchIcon,
-  PlusIcon,
-  Trash2Icon,
-  ClockIcon,
-} from "lucide-react";
-import { useEffect, useState, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { toast } from "sonner";
+"use client";
 
+import * as React from "react";
+import {
+  BookOpen,
+  Bot,
+  Command,
+  Frame,
+  LifeBuoy,
+  Map,
+  PieChart,
+  Send,
+  Settings2,
+  SquareTerminal,
+  Plus,
+  FileText,
+  Trash2,
+} from "lucide-react";
+import { useEffect, useState, useCallback, useRef } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { useNavigate, useRouterState } from "@tanstack/react-router";
+import { toast } from "sonner";
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarHeader,
-  SidebarInset,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
-  SidebarTrigger,
-  useSidebar,
 } from "@/components/ui/sidebar";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { useNavigate } from "@tanstack/react-router";
-import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "./ui/dropdown-menu";
-
-interface AppSidebarProps {
-  children: React.ReactNode;
-}
+} from "@/components/ui/dropdown-menu";
+import { Button } from "@/components/ui/button";
 
 interface NoteMetadata {
   id: string;
@@ -51,344 +45,413 @@ interface NoteMetadata {
   updated_at: string;
 }
 
-export function AppSidebar({ children, ...props }: AppSidebarProps) {
-  return (
-    <SidebarProvider>
-      <SidebarContentWithHotkeys children={children} {...props} />
-    </SidebarProvider>
-  );
+interface SidebarState {
+  notes: NoteMetadata[];
+  last_sync_time: number;
+  is_collapsed?: boolean;
+  selected_note_id?: string;
 }
 
-function SidebarContentWithHotkeys({ children, ...props }: AppSidebarProps) {
+export function AppSidebar({
+  children,
+  ...props
+}: React.ComponentProps<typeof Sidebar> & { children?: React.ReactNode }) {
   const [notes, setNotes] = useState<NoteMetadata[]>([]);
-  const [searchQuery, setSearchQuery] = useState("");
   const [isLoading, setIsLoading] = useState(true);
+  const [isCollapsed, setIsCollapsed] = useState(false);
+
   const navigate = useNavigate();
-  const location = useLocation();
-  const { open, setOpen } = useSidebar();
+  const currentNoteId = useRouterState({
+    select: (state) => {
+      const pathname = state.location.pathname;
+      const match = pathname.match(/^\/note\/(.+)$/);
+      return match ? match[1] : null;
+    },
+  });
 
-  // Get current note ID from the route
-  const currentNoteId = location.pathname.startsWith("/note/")
-    ? location.pathname.split("/note/")[1]
-    : null;
+  // Use refs to track state and prevent infinite loops
+  const isSavingRef = useRef(false);
+  const lastSavedNotesRef = useRef<string>("");
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const hasLoadedInitialStateRef = useRef(false);
 
-  // Load search query from localStorage on mount
-  useEffect(() => {
-    const savedState = localStorage.getItem("sidebar-search-state");
-    if (savedState) {
+  // Load sidebar state from Tauri backend
+  const loadSidebarState =
+    useCallback(async (): Promise<SidebarState | null> => {
       try {
-        const state = JSON.parse(savedState);
-        setSearchQuery(state.searchQuery || "");
+        console.log("Loading sidebar state...");
+        const state = await invoke<SidebarState | null>("load_sidebar_state");
+        console.log("Loaded sidebar state:", state);
+        return state;
       } catch (error) {
-        console.error("Failed to load search state:", error);
+        console.error("Failed to load sidebar state:", error);
+        return null;
       }
-    }
-  }, []); // Empty dependency array - only runs once
+    }, []);
 
-  // Save search query state
-  const saveSearchState = useCallback(() => {
-    const state = {
-      searchQuery,
-      lastUpdated: new Date().toISOString(),
-    };
-    localStorage.setItem("sidebar-search-state", JSON.stringify(state));
-  }, [searchQuery]);
+  // Save sidebar state to Tauri backend
+  const saveSidebarState = useCallback(
+    async (state: Partial<SidebarState>) => {
+      if (isSavingRef.current) {
+        console.log("Already saving, skipping...");
+        return;
+      }
 
-  // Debounced save for search query
-  useEffect(() => {
-    const timeoutId = setTimeout(() => {
-      saveSearchState();
-    }, 300);
+      try {
+        console.log("Saving sidebar state:", state);
+        isSavingRef.current = true;
+        const currentState = (await loadSidebarState()) || {
+          notes: [],
+          last_sync_time: 0,
+          is_collapsed: false,
+          selected_note_id: undefined,
+        };
+        const newState = { ...currentState, ...state };
+        console.log("Combined state to save:", newState);
+        await invoke("save_sidebar_state", { state: newState });
+        console.log("Sidebar state saved successfully");
+      } catch (error) {
+        console.error("Failed to save sidebar state:", error);
+      } finally {
+        isSavingRef.current = false;
+      }
+    },
+    [loadSidebarState]
+  );
 
-    return () => clearTimeout(timeoutId);
-  }, [searchQuery, saveSearchState]);
+  // Debounced save function
+  const debouncedSave = useCallback(
+    (state: Partial<SidebarState>) => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
 
-  useEffect(() => {
-    loadNotes();
-  }, []);
-
-  // Refresh notes when the component becomes visible or when a note is saved
-  useEffect(() => {
-    const handleFocus = () => {
-      loadNotes();
-    };
-
-    const handleNoteSaved = () => {
-      loadNotes();
-    };
-
-    const handleNoteTitleChanged = (event: CustomEvent) => {
-      const { noteId, title } = event.detail;
-      setNotes((prevNotes) =>
-        prevNotes.map((note) =>
-          note.id === noteId ? { ...note, title } : note
-        )
-      );
-    };
-
-    window.addEventListener("focus", handleFocus);
-    window.addEventListener("note-saved", handleNoteSaved);
-    window.addEventListener(
-      "note-title-changed",
-      handleNoteTitleChanged as EventListener
-    );
-
-    return () => {
-      window.removeEventListener("focus", handleFocus);
-      window.removeEventListener("note-saved", handleNoteSaved);
-      window.removeEventListener(
-        "note-title-changed",
-        handleNoteTitleChanged as EventListener
-      );
-    };
-  }, []); // Removed keyboard shortcut handling since SidebarProvider handles it
+      saveTimeoutRef.current = setTimeout(async () => {
+        await saveSidebarState(state);
+      }, 500); // Reduced to 500ms for more responsive saves
+    },
+    [saveSidebarState]
+  );
 
   const loadNotes = useCallback(async () => {
     try {
       setIsLoading(true);
+
+      // Try to load from saved state first
+      const savedState = await loadSidebarState();
+      if (savedState?.notes && savedState.notes.length > 0) {
+        setNotes(savedState.notes);
+        setIsLoading(false);
+      }
+
+      // Always fetch fresh data from backend
       const notesData = await invoke<NoteMetadata[]>("list_notes");
       setNotes(notesData);
+
+      // Save the fresh data to backend
+      await saveSidebarState({
+        notes: notesData,
+        last_sync_time: Date.now(),
+        selected_note_id: currentNoteId || undefined,
+      });
     } catch (error) {
       console.error("Failed to load notes:", error);
       toast.error("Failed to load notes");
     } finally {
       setIsLoading(false);
     }
+  }, [loadSidebarState, saveSidebarState, currentNoteId]);
+
+  // Load initial state from backend
+  useEffect(() => {
+    const loadInitialState = async () => {
+      const savedState = await loadSidebarState();
+      if (savedState) {
+        if (savedState.is_collapsed !== undefined) {
+          setIsCollapsed(savedState.is_collapsed);
+        }
+        if (savedState.notes && savedState.notes.length > 0) {
+          setNotes(savedState.notes);
+          setIsLoading(false);
+        }
+      }
+      hasLoadedInitialStateRef.current = true;
+    };
+
+    loadInitialState();
+  }, [loadSidebarState]);
+
+  useEffect(() => {
+    loadNotes();
+  }, [loadNotes]);
+
+  // Save state when notes change (with debouncing)
+  useEffect(() => {
+    if (notes.length > 0 && hasLoadedInitialStateRef.current) {
+      const notesString = JSON.stringify(notes);
+      if (notesString !== lastSavedNotesRef.current) {
+        lastSavedNotesRef.current = notesString;
+        debouncedSave({
+          notes,
+          last_sync_time: Date.now(),
+          selected_note_id: currentNoteId || undefined,
+        });
+      }
+    }
+  }, [notes, currentNoteId, debouncedSave]);
+
+  // Save collapsed state
+  useEffect(() => {
+    if (hasLoadedInitialStateRef.current) {
+      debouncedSave({ is_collapsed: isCollapsed });
+    }
+  }, [isCollapsed, debouncedSave]);
+
+  // Listen for note events to refresh the list
+  useEffect(() => {
+    const handleNoteSaved = () => {
+      loadNotes();
+    };
+
+    const handleNoteTitleChanged = (event: Event) => {
+      const customEvent = event as CustomEvent;
+      const { noteId, title } = customEvent.detail;
+      setNotes((prevNotes) => {
+        const updatedNotes = prevNotes.map((note) =>
+          note.id === noteId ? { ...note, title } : note
+        );
+        // Save the updated notes to backend
+        debouncedSave({
+          notes: updatedNotes,
+          last_sync_time: Date.now(),
+        });
+        return updatedNotes;
+      });
+    };
+
+    window.addEventListener("note-saved", handleNoteSaved);
+    window.addEventListener("note-title-changed", handleNoteTitleChanged);
+
+    return () => {
+      window.removeEventListener("note-saved", handleNoteSaved);
+      window.removeEventListener("note-title-changed", handleNoteTitleChanged);
+    };
+  }, [loadNotes, debouncedSave]);
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
+    };
   }, []);
 
-  const createNewNote = useCallback(async () => {
+  const handleCreateNewNote = () => {
+    navigate({ to: "/" });
+  };
+
+  const handleNoteClick = async (noteId: string) => {
+    navigate({ to: "/note/$noteId", params: { noteId } });
+    // Save the selected note ID
+    debouncedSave({ selected_note_id: noteId });
+  };
+
+  const handleDeleteNote = async (noteId: string, event: React.MouseEvent) => {
+    event.stopPropagation();
+    console.log("Deleting note:", noteId, "Current note:", currentNoteId);
+
     try {
-      const noteId = await invoke<string>("save_note", {
-        title: "Untitled Note",
-        content: "",
-        links: [],
+      await invoke("delete_note", { id: noteId });
+      console.log("Note deleted successfully");
+
+      // Update the notes list first
+      setNotes((prevNotes) => {
+        const updatedNotes = prevNotes.filter((note) => note.id !== noteId);
+        // Save the updated notes to backend
+        debouncedSave({
+          notes: updatedNotes,
+          last_sync_time: Date.now(),
+        });
+        return updatedNotes;
       });
-      toast.success("New note created");
-      navigate({ to: "/note/$noteId", params: { noteId } });
-      loadNotes(); // Refresh the notes list
-    } catch (error) {
-      console.error("Failed to create note:", error);
-      toast.error("Failed to create note");
-    }
-  }, [navigate, loadNotes]);
 
-  const deleteNote = useCallback(
-    async (noteId: string, event: React.MouseEvent) => {
-      event.preventDefault();
-      event.stopPropagation();
-
-      try {
-        await invoke("delete_note", { id: noteId });
-        toast.success("Note deleted");
-        loadNotes(); // Refresh the notes list
-      } catch (error) {
-        console.error("Failed to delete note:", error);
-        toast.error("Failed to delete note");
+      // If we're currently viewing the deleted note, don't navigate - just let the user stay on the current page
+      // The note will be gone from the sidebar, but the current page will remain
+      if (currentNoteId === noteId) {
+        console.log("Note deleted but staying on current page");
+        // Don't navigate - let the user manually navigate if they want
       }
-    },
-    [loadNotes]
-  );
 
-  const filteredNotes = notes.filter((note) =>
-    note.title.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+      toast.success("Note deleted");
+    } catch (error) {
+      console.error("Failed to delete note:", error);
+      toast.error("Failed to delete note");
+      // Don't throw the error to prevent app restart
+    }
+  };
 
-  const selectedNote = filteredNotes.find((note) => note.id === currentNoteId);
-  const sidebarGroupClass = selectedNote ? "p-0 " : "pr-3";
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffInHours = (now.getTime() - date.getTime()) / (1000 * 60 * 60);
+
+    if (diffInHours < 24) {
+      return date.toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    } else if (diffInHours < 168) {
+      // 7 days
+      return date.toLocaleDateString([], { weekday: "short" });
+    } else {
+      return date.toLocaleDateString([], { month: "short", day: "numeric" });
+    }
+  };
 
   return (
-    <div className="flex h-screen w-screen">
-      <Sidebar variant="inset" {...props} className="p-0 ">
-        <SidebarContent className="p-0">
-          <div className="flex items-center gap-2  pt-2">
-            <Input
-              placeholder="Search notes..."
-              className="max-w-sm"
-              value={searchQuery}
-              onChange={(e) => {
-                setSearchQuery(e.target.value);
-              }}
-            />
+    <SidebarProvider
+      defaultOpen={!isCollapsed}
+      open={!isCollapsed}
+      onOpenChange={(open) => setIsCollapsed(!open)}
+    >
+      <Sidebar variant="inset" {...props}>
+        <SidebarHeader>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton size="lg" asChild>
+                <a
+                  href="#"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    handleCreateNewNote();
+                  }}
+                >
+                  <div className="bg-sidebar-primary text-sidebar-primary-foreground flex aspect-square size-8 items-center justify-center rounded-lg">
+                    <Command className="size-4" />
+                  </div>
+                  <div className="grid flex-1 text-left text-sm leading-tight">
+                    <span className="truncate font-medium">Notes</span>
+                    <span className="truncate text-xs">
+                      Your personal notes
+                    </span>
+                  </div>
+                </a>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarHeader>
+
+        <SidebarContent>
+          <div className="flex items-center justify-between px-4 py-2">
+            <h3 className="text-sm font-medium">All Notes</h3>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={handleCreateNewNote}
+              className="h-6 w-6 p-0"
+            >
+              <Plus className="h-4 w-4" />
+            </Button>
           </div>
 
-          <SidebarGroup>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                <SidebarMenuItem>
-                  <SidebarMenuButton onClick={createNewNote}>
-                    <PlusIcon className="size-4" />
-                    <span>New Note</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-
-          <SidebarGroup className={sidebarGroupClass}>
-            <SidebarGroupLabel>Notes</SidebarGroupLabel>
-            <SidebarGroupContent className="">
-              {isLoading ? (
-                <div className="px-2 py-4 text-sm text-muted-foreground">
+          <div className="px-2">
+            {isLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <div className="text-sm text-muted-foreground">
                   Loading notes...
                 </div>
-              ) : filteredNotes.length === 0 ? (
-                <div className="px-2 py-4 text-sm text-muted-foreground">
-                  {searchQuery ? "No notes found" : "No notes yet"}
+              </div>
+            ) : notes.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-8 text-center">
+                <FileText className="h-8 w-8 text-muted-foreground mb-2" />
+                <div className="text-sm text-muted-foreground">
+                  No notes yet
                 </div>
-              ) : (
-                <SidebarMenu className="pl-2 py-4">
-                  {filteredNotes.map((note) => {
-                    const isSelected = currentNoteId === note.id;
-                    return (
-                      <SidebarMenuItem key={note.id}>
-                        <div className="relative group">
-                          <SidebarMenuButton
-                            onClick={(e) => {
-                              // Don't navigate if clicking on the settings button
-                              if (
-                                e.target !== e.currentTarget &&
-                                (e.target as HTMLElement).closest(
-                                  "[data-settings-button]"
-                                )
-                              ) {
-                                return;
-                              }
-
-                              if (currentNoteId && currentNoteId !== note.id) {
-                                window.dispatchEvent(
-                                  new CustomEvent("navigate-away", {
-                                    detail: { to: `/note/${note.id}` },
-                                  })
-                                );
-                              } else {
-                                navigate({
-                                  to: "/note/$noteId",
-                                  params: { noteId: note.id },
-                                });
-                              }
-                            }}
-                            className={
-                              isSelected
-                                ? "bg-background text-accent-foreground rounded-none py-6 rounded-l-lg hover:bg-transparent relative"
-                                : "w-[95%] py-6 px-2 rounded-2xl  mx-2  hover:bg-muted/50 relative"
-                            }
-                            style={
-                              isSelected
-                                ? { backgroundColor: "var(--background)" }
-                                : undefined
-                            }
-                          >
-                            <FileTextIcon className="size-4" />
-                            <div className="flex-1 min-w-0">
-                              <div className="truncate text-sm font-medium flex items-center gap-1">
-                                {note.title || "Untitled"}
-                                {isSelected && (
-                                  <span className="text-xs text-muted-foreground">
-                                    *
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  data-settings-button
-                                  className={`h-6 w-6 p-0 transition-opacity absolute right-2 top-1/2 -translate-y-1/2 z-20 ${
-                                    isSelected
-                                      ? "opacity-100"
-                                      : "opacity-0 group-hover:opacity-100"
-                                  }`}
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                  }}
-                                >
-                                  <span className="sr-only">Open menu</span>
-                                  <SettingsIcon className="size-3" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
-                                <DropdownMenuItem
-                                  onClick={(e) => deleteNote(note.id, e)}
-                                  className="text-red-600"
-                                >
-                                  <Trash2Icon className="size-4 mr-2" />
-                                  Delete
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </SidebarMenuButton>
-                          {isSelected && (
-                            <>
-                              <svg
-                                width="40"
-                                height="40"
-                                viewBox="0 0 100 100"
-                                xmlns="http://www.w3.org/2000/svg"
-                                className="absolute -top-10 right-0 z-10"
-                                style={{ fill: "var(--background)" }}
-                              >
-                                <path
-                                  d="
-                                    M 100,100
-                                    L 60,100
-                                    A 40,40 0 0 0 100,60
-                                    Z
-                                  "
-                                />
-                              </svg>
-                              <svg
-                                width="40"
-                                height="40"
-                                viewBox="0 0 100 100"
-                                xmlns="http://www.w3.org/2000/svg"
-                                className="absolute -bottom-10 right-0 z-10"
-                                style={{ fill: "var(--background)" }}
-                              >
-                                <path
-                                  d="
-                                    M 100,0
-                                    L 100,40
-                                    A 40,40 0 0 0 60,0
-                                    Z
-                                  "
-                                />
-                              </svg>
-                            </>
-                          )}
+                <div className="text-xs text-muted-foreground mt-1">
+                  Create your first note to get started
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-1">
+                {notes.map((note) => {
+                  const isActive = currentNoteId === note.id;
+                  return (
+                    <div
+                      key={note.id}
+                      className={`group relative rounded-md transition-colors ${
+                        isActive
+                          ? "bg-accent text-accent-foreground"
+                          : "hover:bg-accent/50"
+                      }`}
+                    >
+                      <button
+                        onClick={() => handleNoteClick(note.id)}
+                        className="w-full text-left px-3 py-2 text-sm flex items-center justify-between"
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="truncate font-medium">
+                            {note.title || "Untitled Note"}
+                          </div>
+                          <div className="text-xs text-muted-foreground truncate">
+                            {formatDate(note.updated_at)}
+                          </div>
                         </div>
-                      </SidebarMenuItem>
-                    );
-                  })}
-                </SidebarMenu>
-              )}
-            </SidebarGroupContent>
-          </SidebarGroup>
-        </SidebarContent>
-      </Sidebar>
+                      </button>
 
-      <SidebarInset className="">
-        <div className="flex h-full flex-col">
-          <div className="flex items-center gap-2 px-4 py-2">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <SidebarTrigger className="cursor-pointer" />
-              </TooltipTrigger>
-              <TooltipContent
-                side="right"
-                align="center"
-                className=" text-secondary"
-              >
-                Toggle sidebar{" "}
-                <span className="ml-2 text-xs text-secondary ">(Ctrl+B)</span>
-              </TooltipContent>
-            </Tooltip>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <button className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity h-6 w-6 p-0 hover:bg-accent/80 rounded">
+                            <span className="sr-only">Open menu</span>
+                            <div className="h-4 w-4" />
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-32">
+                          <DropdownMenuItem
+                            onClick={(e) => handleDeleteNote(note.id, e)}
+                            className="text-destructive focus:text-destructive"
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
-          <div className="flex-1 overflow-auto">{children}</div>
-        </div>
-      </SidebarInset>
-    </div>
+        </SidebarContent>
+
+        <SidebarFooter>
+          <div className="px-4 py-2">
+            <div className="text-xs text-muted-foreground">
+              {notes.length} note{notes.length !== 1 ? "s" : ""}
+            </div>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={async () => {
+                console.log("Testing state save...");
+                await saveSidebarState({
+                  notes: notes,
+                  last_sync_time: Date.now(),
+                  is_collapsed: isCollapsed,
+                  selected_note_id: currentNoteId || undefined,
+                });
+                console.log("Testing state load...");
+                const loaded = await loadSidebarState();
+                console.log("Loaded state:", loaded);
+              }}
+              className="mt-2 w-full text-xs"
+            >
+              Test State Save/Load
+            </Button>
+          </div>
+        </SidebarFooter>
+      </Sidebar>
+      {children}
+    </SidebarProvider>
   );
 }

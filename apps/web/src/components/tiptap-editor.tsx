@@ -111,10 +111,10 @@ export function TipTapEditor({
   }
 
   return (
-    <div className="w-full">
+    <div className="w-full backdrop-blur-sm">
       <EditorContent
         editor={editor}
-        className={`min-h-[200px] w-full p-4 focus:outline-none ${className}`}
+        className={`min-h-[200px] w-full p-4 focus:outline-none backdrop-blur-sm scrollbar-custom ${className}`}
       />
     </div>
   );

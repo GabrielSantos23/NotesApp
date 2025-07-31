@@ -170,32 +170,53 @@ function NoteComponent() {
         setPendingNavigation(to);
         setShowUnsavedDialog(true);
       } else {
-        // Use replaceState to avoid page refresh
-        window.history.replaceState(null, "", to);
+        // Use proper navigation instead of history manipulation
+        if (to === "/") {
+          navigate({ to: "/" });
+        } else {
+          const match = to.match(/^\/note\/(.+)$/);
+          if (match) {
+            navigate({ to: "/note/$noteId", params: { noteId: match[1] } });
+          }
+        }
       }
     },
-    [hasUnsavedChanges]
+    [hasUnsavedChanges, navigate]
   );
 
   const handleSaveAndNavigate = useCallback(async () => {
     setShowUnsavedDialog(false);
     await saveNote();
     if (pendingNavigation) {
-      // Use replaceState to avoid page refresh
-      window.history.replaceState(null, "", pendingNavigation);
+      // Use proper navigation instead of history manipulation
+      if (pendingNavigation === "/") {
+        navigate({ to: "/" });
+      } else {
+        const match = pendingNavigation.match(/^\/note\/(.+)$/);
+        if (match) {
+          navigate({ to: "/note/$noteId", params: { noteId: match[1] } });
+        }
+      }
       setPendingNavigation(null);
     }
-  }, [pendingNavigation]);
+  }, [pendingNavigation, navigate]);
 
   const handleDiscardAndNavigate = useCallback(() => {
     setShowUnsavedDialog(false);
     setHasUnsavedChanges(false);
     if (pendingNavigation) {
-      // Use replaceState to avoid page refresh
-      window.history.replaceState(null, "", pendingNavigation);
+      // Use proper navigation instead of history manipulation
+      if (pendingNavigation === "/") {
+        navigate({ to: "/" });
+      } else {
+        const match = pendingNavigation.match(/^\/note\/(.+)$/);
+        if (match) {
+          navigate({ to: "/note/$noteId", params: { noteId: match[1] } });
+        }
+      }
       setPendingNavigation(null);
     }
-  }, [pendingNavigation]);
+  }, [pendingNavigation, navigate]);
 
   const handleCancelNavigation = useCallback(() => {
     setShowUnsavedDialog(false);
@@ -244,22 +265,34 @@ function NoteComponent() {
             updated_at: new Date().toISOString(),
           };
           setNote(updatedNote);
-          // Update the URL without navigation
-          window.history.replaceState(null, "", `/note/${newNoteId}`);
+          // Update the URL using proper navigation
+          navigate({ to: "/note/$noteId", params: { noteId: newNoteId } });
         }
       }
       setHasUnsavedChanges(false);
-      toast.success("Note saved");
+
+      // Check if window is minimized and show native notification
+      const isMinimized = await invoke<boolean>("is_window_minimized");
+      if (isMinimized) {
+        await invoke("show_notification", {
+          title: "Note Saved",
+          body: `"${noteTitle}" has been saved successfully.`,
+        });
+      } else {
+        // Show in-app toast when not minimized
+        toast.success("Note saved");
+      }
 
       // Notify sidebar to refresh notes list
       window.dispatchEvent(new CustomEvent("note-saved"));
     } catch (error) {
       console.error("Failed to save note:", error);
       toast.error("Failed to save note");
+      // Don't throw the error to prevent app restart
     } finally {
       setIsSaving(false);
     }
-  }, [noteId]);
+  }, [noteId, navigate]);
 
   // Handle Ctrl+S keyboard shortcut and navigation events
   useEffect(() => {
@@ -275,7 +308,13 @@ function NoteComponent() {
       handleNavigation(to);
     };
 
+    // Prevent context menu on right click
+    const handleContextMenu = (event: MouseEvent) => {
+      event.preventDefault();
+    };
+
     document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("contextmenu", handleContextMenu);
     window.addEventListener(
       "navigate-away",
       handleNavigateAway as EventListener
@@ -283,6 +322,7 @@ function NoteComponent() {
 
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("contextmenu", handleContextMenu);
       window.removeEventListener(
         "navigate-away",
         handleNavigateAway as EventListener
@@ -367,7 +407,6 @@ function NoteComponent() {
       setHasLink(false);
       setInvalidUrlWarning(null);
 
-      // Check if there are actual changes using the comprehensive function
       const hasChanges = hasActualChanges(title, content, "", note);
       setHasUnsavedChanges(hasChanges);
       return;
@@ -378,8 +417,6 @@ function NoteComponent() {
       setLink(value);
       setHasLink(true);
       setInvalidUrlWarning(null);
-
-      // Check if there are actual changes using the comprehensive function
       const hasChanges = hasActualChanges(title, content, value, note);
       setHasUnsavedChanges(hasChanges);
     } else {
@@ -390,16 +427,11 @@ function NoteComponent() {
   const handleTitleChange = (value: string) => {
     if (value.length <= 100) {
       setTitle(value);
-
-      // Check if there are actual changes using the comprehensive function
       const hasChanges = hasActualChanges(value, content, link, note);
       setHasUnsavedChanges(hasChanges);
-
-      // Update note title in sidebar immediately
       if (note) {
         const updatedNote = { ...note, title: value };
         setNote(updatedNote);
-        // Notify sidebar to update the note title
         window.dispatchEvent(
           new CustomEvent("note-title-changed", {
             detail: { noteId: note.id, title: value },
@@ -412,7 +444,6 @@ function NoteComponent() {
   const handleContentChange = (value: string) => {
     setContent(value);
 
-    // Check if there are actual changes using the comprehensive function
     const hasChanges = hasActualChanges(title, value, link, note);
     setHasUnsavedChanges(hasChanges);
   };
@@ -430,7 +461,7 @@ function NoteComponent() {
     return (
       <button
         type="button"
-        className="inline-flex items-center gap-2 px-2 py-1 rounded-md bg-muted hover:bg-accent transition-colors text-sm"
+        className="inline-flex items-center gap-2 px-2 py-1 rounded-md bg-muted hover:bg-accent transition-colors text-sm border border-border"
         onClick={onClick}
       >
         <img
@@ -460,8 +491,8 @@ function NoteComponent() {
   // If note doesn't exist, show a message that this is a new note
   if (!note) {
     return (
-      <div className="flex h-full w-full flex-col">
-        <div className="flex h-full w-full container p-4 sm:p-8 lg:p-20">
+      <div className="flex h-full w-full flex-col backdrop-blur-md">
+        <div className="flex h-full w-full max-w-4xl mx-auto p-4 sm:p-8 lg:p-12">
           <div className="flex h-full w-full flex-col">
             <div className="flex items-center justify-between mb-4">
               <div className="flex-1">
@@ -571,8 +602,8 @@ function NoteComponent() {
 
   return (
     <>
-      <div className="flex h-full w-full flex-col">
-        <div className="flex h-full w-full container p-4 sm:p-8 lg:p-20">
+      <div className="flex h-full w-full flex-col backdrop-blur-md">
+        <div className="flex h-full w-full max-w-4xl mx-auto p-4 sm:p-8 lg:p-12">
           <div className="flex h-full w-full flex-col">
             <div className="flex items-center justify-between mb-4">
               <div className="flex-1">
@@ -664,45 +695,10 @@ function NoteComponent() {
               </div>
               {hasLink && urls.length > 0 && (
                 <div className="flex items-center gap-1 flex-shrink-0">
-                  <div className="flex items-center gap-1 min-w-0">
-                    <button
-                      type="button"
-                      className="group p-0 m-0 bg-transparent border-none flex items-center gap-2"
-                      onClick={() => {
-                        if (urls[0]) {
-                          invoke("open_url", { url: urls[0] }).catch(() => {
-                            window.open(
-                              urls[0],
-                              "_blank",
-                              "noopener,noreferrer"
-                            );
-                          });
-                        }
-                      }}
-                    >
-                      <img
-                        src={getFaviconUrl(urls[0])}
-                        alt={`${extractDomain(urls[0])} favicon`}
-                        className="w-4 h-4 rounded-sm"
-                        onError={(e) => {
-                          e.currentTarget.style.display = "none";
-                          e.currentTarget.nextElementSibling?.classList.remove(
-                            "hidden"
-                          );
-                        }}
-                      />
-                      <Globe className="w-4 h-4 hidden" />
-                      <span className="text-sm text-muted-foreground truncate max-w-[150px] sm:max-w-[200px] group-hover:text-primary transition-colors">
-                        {extractDomain(urls[0])}
-                      </span>
-                      <ExternalLink className="size-4 text-muted-foreground cursor-pointer transition-colors flex-shrink-0 group-hover:text-primary" />
-                    </button>
-                  </div>
-
                   {urls.length > 1 && (
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <button className="flex items-center justify-center w-6 h-6 rounded-md bg-muted hover:bg-accent transition-colors flex-shrink-0">
+                        <button className="flex items-center justify-center w-6 h-6 border border-border rounded-md bg-muted hover:bg-accent transition-colors flex-shrink-0">
                           <span className="text-xs font-medium">
                             +{urls.length - 1}
                           </span>

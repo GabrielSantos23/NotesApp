@@ -2,21 +2,30 @@
   "$schema": "../../../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Notes",
   "version": "0.1.0",
-  "identifier": "com.tauri.dev",
+  "identifier": "com.notes.app",
   "build": {
-    "frontendDist": "../build",
+    "frontendDist": "../dist",
     "devUrl": "http://localhost:3001",
-    "beforeDevCommand": "bun dev",
-    "beforeBuildCommand": "bun build"
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
   },
   "app": {
     "windows": [
       {
         "transparent": true,
         "decorations": false,
-        "title": "MyApp",
+        "title": "Notes",
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "width": 1200,
+        "height": 800,
+        "center": true,
+        "minWidth": 800,
+        "minHeight": 600,
+        "titleBarStyle": "Overlay",
+        "skipTaskbar": false,
+        "alwaysOnTop": false,
+        "visible": true
       }
     ],
     "security": {

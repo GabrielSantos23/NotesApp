@@ -28,6 +28,7 @@ export const Route = createFileRoute("/")({
 });
 
 function HomeComponent() {
+  console.log("HomeComponent rendered");
   const [title, setTitle] = useState("");
   const [link, setLink] = useState("");
   const [hasLink, setHasLink] = useState(false);
@@ -101,6 +102,7 @@ function HomeComponent() {
       } catch (error) {
         console.error("Failed to save note:", error);
         toast.error("Failed to save note");
+        // Don't throw the error to prevent app restart
       } finally {
         setIsSaving(false);
       }
@@ -152,7 +154,6 @@ function HomeComponent() {
                 const newLinkString = joinUrls(newUrls);
                 setLink(newLinkString);
                 setHasLink(true);
-                toast.success("URL automatically added to link field!");
                 lastProcessedClipboardRef.current = clipboardText;
               }
             } else {
@@ -211,6 +212,7 @@ function HomeComponent() {
     if (!currentNoteId) {
       await saveNote();
     } else {
+      // Use proper navigation to avoid app restart
       navigate({ to: "/note/$noteId", params: { noteId: currentNoteId } });
     }
   };
@@ -248,8 +250,8 @@ function HomeComponent() {
   };
 
   return (
-    <div className="flex h-full w-full flex-col">
-      <div className="flex h-full w-full container p-4 sm:p-8 lg:p-20">
+    <div className="flex h-full w-full flex-col backdrop-blur-md">
+      <div className="flex h-full w-full max-w-4xl mx-auto p-4 sm:p-8 lg:p-12">
         <div className="flex h-full w-full flex-col">
           <div className="flex items-center justify-between mb-4">
             <div className="flex-1">

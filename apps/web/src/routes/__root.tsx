@@ -1,4 +1,3 @@
-import Header from "@/components/header";
 import Loader from "@/components/loader";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
@@ -11,7 +10,11 @@ import {
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import "../index.css";
 import { AppSidebar } from "@/components/app-sidebar";
-import { SidebarInset } from "@/components/ui/sidebar";
+import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar";
+import { Separator } from "@/components/ui/separator";
+import Header from "@/components/header";
+import ErrorBoundary from "@/components/error-boundary";
+import { useEffect } from "react";
 
 export interface RouterAppContext {}
 
@@ -41,28 +44,69 @@ function RootComponent() {
     select: (s) => s.isLoading,
   });
 
+  // Prevent context menu on right click throughout the app
+  useEffect(() => {
+    const handleContextMenu = (event: MouseEvent) => {
+      event.preventDefault();
+    };
+
+    document.addEventListener("contextmenu", handleContextMenu);
+
+    return () => {
+      document.removeEventListener("contextmenu", handleContextMenu);
+    };
+  }, []);
+
   return (
-    <>
-      <HeadContent />
-      <ThemeProvider
-        attribute="class"
-        defaultTheme="dark"
-        disableTransitionOnChange
-        storageKey="vite-ui-theme"
-      >
-        <AppSidebar>
-          {isFetching ? (
-            <Loader />
-          ) : (
-            <SidebarInset>
-              {" "}
-              <Outlet />
-            </SidebarInset>
-          )}
-        </AppSidebar>
-        <Toaster richColors />
-      </ThemeProvider>
-      <TanStackRouterDevtools position="bottom-left" />
-    </>
+    <ErrorBoundary>
+      <div className="overflow-hidden relative ">
+        <HeadContent />
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="dark"
+          disableTransitionOnChange
+          storageKey="vite-ui-theme"
+        >
+          {/* Always-present draggable area */}
+          <div className="fixed top-0 left-0 right-0 h-12 z-40 header-draggable" />
+
+          {/* Overlay Header */}
+          <div className="fixed top-0 left-0 right-0 z-50 group">
+            {/* Invisible trigger area */}
+            {/* Header that slides down on hover */}
+            <div className="transform -translate-y-full group-hover:translate-y-0 transition-transform duration-300 ease-out">
+              <Header />
+            </div>
+          </div>
+
+          <div className="flex h-screen bg-[#0a0a0acc]">
+            <AppSidebar>
+              <SidebarInset>
+                <header className="flex h-16 shrink-0 items-center gap-2 bg-sidebar">
+                  <div className="flex items-center gap-2 px-4">
+                    <SidebarTrigger className="-ml-1" />
+                    <Separator
+                      orientation="vertical"
+                      className="mr-2 data-[orientation=vertical]:h-4"
+                    />
+                  </div>
+                </header>
+                <div
+                  className="overflow-y-auto scrollbar-custom"
+                  style={{
+                    scrollbarWidth: "thin",
+                    scrollbarColor: "var(--muted-foreground) transparent",
+                  }}
+                >
+                  <Outlet />
+                </div>
+              </SidebarInset>
+            </AppSidebar>
+          </div>
+          <Toaster richColors />
+        </ThemeProvider>
+        <TanStackRouterDevtools position="bottom-left" />
+      </div>
+    </ErrorBoundary>
   );
 }
